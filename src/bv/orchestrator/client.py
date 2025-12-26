@@ -44,7 +44,16 @@ class OrchestratorClient:
 	def base_url(self) -> str:
 		return self._auth().api_url.rstrip("/")
 
-	def request(self, method: str, path: str, *, params: dict | None = None, json: Any = None) -> OrchestratorResponse:
+	def request(
+		self,
+		method: str,
+		path: str,
+		*,
+		params: dict | None = None,
+		json: Any = None,
+		data: Any = None,
+		files: Any = None,
+	) -> OrchestratorResponse:
 		try:
 			ctx = self._auth()
 		except AuthError as exc:
@@ -62,6 +71,8 @@ class OrchestratorClient:
 				headers=headers,
 				params=params,
 				json=json,
+				data=data,
+				files=files,
 				timeout=self._timeout_seconds,
 			)
 		except requests.RequestException as exc:

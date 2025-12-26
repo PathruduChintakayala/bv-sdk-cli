@@ -17,6 +17,8 @@ Key properties:
 - `src/bv/entrypoints/registry.py`: entrypoint management + import validation (temporarily adds project root to `sys.path`)
 - `src/bv/venv/manager.py`: project-scoped virtualenv creation and `pip freeze`
 - `src/bv/packaging/builder.py`: deterministic `.bvpackage` creation (manifest, entry-points, requirements.lock)
+- `src/bv/packaging/bvpackage_validator.py`: BV Package Contract v1 validator
+- `docs/bv-package-contract-v1.md`: BV Package Contract v1 (authoritative)
 
 ## Configuration responsibilities
 
@@ -230,10 +232,10 @@ Notes:
 
 6) Publish locally (auto-increments version):
 
-- `bv publish` (defaults to PATCH bump)
-- `bv publish --major`
-- `bv publish --minor`
-- `bv publish --patch`
+- `bv publish local` (defaults to PATCH bump)
+- `bv publish local --major`
+- `bv publish local --minor`
+- `bv publish local --patch`
 
 Publish behavior:
 
@@ -241,6 +243,20 @@ Publish behavior:
 - Persists the bumped version first, then builds (if needed) using the bumped version.
 - Copies (or moves) the artifact into `./published/<name>/<version>/`.
 - Never overwrites an existing artifact unless `--overwrite` is passed.
+
+7) Publish to Orchestrator (developer-mode, safe preflight):
+
+- `bv publish orchestrator`
+	- Reads `bvproject.yaml` (name + SemVer version)
+	- Builds a deterministic `.bvpackage` using the existing `bv build` logic
+	- Calls `POST /api/packages/preflight` and stops if rejected
+	- Uploads the package via `POST /api/packages/upload` (multipart/form-data)
+	- Prints: `Published <name>@<version> to <orchestrator-url>`
+
+Notes:
+- You must be authenticated first: `bv auth login ...`
+- Orchestrator is the final authority for publish validation.
+- The SDK does not retry uploads automatically.
 
 ## Entrypoints
 
