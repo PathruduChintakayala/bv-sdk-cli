@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
+import os
 import shutil
 import sys
 import zipfile
@@ -384,7 +385,21 @@ def run_project(
 
     project_root = config_path.parent.resolve()
     added_path = False
+    old_bv_sdk_run = os.environ.get("BV_SDK_RUN")
+    old_bv_orch_url = os.environ.get("BV_ORCHESTRATOR_URL")
     try:
+        os.environ["BV_SDK_RUN"] = "1"
+
+        # If the project declares an orchestrator.url, make it the expected URL for runtime.
+        try:
+            from bv.project.orchestrator import resolve_orchestrator_url
+
+            expected_url = resolve_orchestrator_url(config_path)
+            if expected_url:
+                os.environ["BV_ORCHESTRATOR_URL"] = expected_url
+        except Exception:
+            pass
+
         root_str = str(project_root)
         if root_str not in sys.path:
             sys.path.insert(0, root_str)
@@ -434,6 +449,16 @@ def run_project(
         raise TypeError("Entrypoint signature must accept 0 args or exactly 1 argument")
 
     finally:
+        if old_bv_sdk_run is None:
+            os.environ.pop("BV_SDK_RUN", None)
+        else:
+            os.environ["BV_SDK_RUN"] = old_bv_sdk_run
+
+        if old_bv_orch_url is None:
+            os.environ.pop("BV_ORCHESTRATOR_URL", None)
+        else:
+            os.environ["BV_ORCHESTRATOR_URL"] = old_bv_orch_url
+
         if added_path:
             try:
                 sys.path.remove(str(project_root))

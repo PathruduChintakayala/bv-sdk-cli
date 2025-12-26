@@ -12,6 +12,7 @@ authors = [{ name = "Bot Velocity Team" }]
 dependencies = [
 	"typer>=0.12",
 	"pyyaml>=6.0",
+	"requests>=2.32",
 ]
 readme = "README.md"
 license = { text = "Proprietary" }

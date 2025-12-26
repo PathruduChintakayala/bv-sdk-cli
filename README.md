@@ -4,8 +4,8 @@ Typer-based CLI (Python 3.11+) for local-only, deterministic Python automations.
 
 Key properties:
 
-- No network calls.
-- No orchestrator integration.
+- Local-first and deterministic for build/publish/run behavior.
+- Optional developer-mode Orchestrator integration (interactive user auth) for local development.
 - The automation contract is `bvproject.yaml`.
 - `pyproject.toml` is used only for Python dependency management.
 - Project root is treated as the Python import root (no `src/` layout is assumed).
@@ -107,7 +107,7 @@ Rules:
 - Uses project root as import root (temporarily inserts it into `sys.path`).
 - Does not switch virtual environments.
 - Does not spawn subprocesses.
-- Does not perform any network calls.
+- Does not perform any network calls unless your automation imports and uses `bv.runtime` (developer-mode Orchestrator access).
 
 Input handling:
 
@@ -118,6 +118,105 @@ Input handling:
 Output handling:
 
 - Prints returned value to stdout as JSON when possible, otherwise prints `repr(result)`.
+
+## Developer-mode Orchestrator access (Auth, Assets, Queues)
+
+The SDK supports a **developer-only** authentication mode that lets you call Orchestrator APIs while developing locally.
+
+This is explicitly NOT runner execution, NOT unattended automation, and NOT production auth.
+
+### Strict boundaries
+
+This SDK auth mode MUST NOT be used to:
+
+- Register robots
+- Send machine heartbeats
+- Execute jobs
+- Call runner APIs
+- Use robot/service-account tokens
+
+### Login
+
+Authenticate interactively via the browser:
+
+- `bv auth login --api-url http://127.0.0.1:8000 --ui-url http://localhost:5173`
+
+Flow:
+
+1) SDK calls `POST {api-url}/api/sdk/auth/start` (includes machine name)
+2) SDK opens `{ui-url}/#/sdk-auth?session_id=...`
+3) SDK polls `GET {api-url}/api/sdk/auth/status?session_id=...` every 2 seconds
+4) On success, SDK writes `~/.bv/auth.json` and overwrites any existing auth
+
+Timeout: 5 minutes.
+
+Diagnostics:
+
+- The CLI prints the exact URL it opens (never prints tokens).
+- While polling, it prints a short message about every ~10 seconds:
+	- `Waiting for browser authentication… (open tab if not already)`
+- If you are redirected to the dashboard after login, ensure the URL still contains `#/sdk-auth?session_id=...`.
+- If the auth session expires, the CLI stops and tells you to run `bv auth login` again.
+
+Session reuse:
+
+- If the backend reuses an existing auth session for the same machine, the CLI prints `Reusing existing auth session …` and continues normally.
+
+### Auth status / logout
+
+- `bv auth status`
+	- Shows: logged in / not logged in, `api_url`, `ui_url`, `expires_at`, `username`, `machine_name`
+	- Never prints the token
+- `bv auth logout`
+	- Deletes `~/.bv/auth.json` if present
+
+### Token storage
+
+Auth is stored unencrypted (dev-only) at `~/.bv/auth.json`:
+
+```json
+{
+	"api_url": "http://127.0.0.1:8000",
+	"ui_url": "http://localhost:5173",
+	"access_token": "...",
+	"expires_at": "ISO8601",
+	"user": {
+		"id": 1,
+		"username": "admin"
+	},
+	"machine_name": "DEV-HOST-01"
+}
+```
+
+The CLI must never print the token.
+
+### Assets (read-only)
+
+- `bv assets list [--search TEXT]`
+- `bv assets get <name>`
+
+Secret/credential-like assets are masked in CLI output as `"***"`.
+
+### Queues
+
+- `bv queues list`
+- `bv queues put <queue-name> --input payload.json`
+- `bv queues get <queue-name>`
+
+### Runtime access during `bv run`
+
+During `bv run`, automation code can access assets and queues via:
+
+```python
+from bv.runtime import assets, queues
+
+value = assets.get("MY_CONFIG")
+item = queues.get("orders")
+queues.put("results", {"id": 1})
+```
+
+These runtime modules are only available when your code is executed via `bv run`.
+They fail fast if used outside of `bv run` or if you are not authenticated.
 
 5) Build a deterministic package:
 

@@ -7,6 +7,11 @@ from typing import List, Optional
 
 import typer
 
+from bv.auth.context import AuthError, logout as auth_logout, save_auth_context, try_load_auth_context
+from bv.auth.login import LoginError, interactive_login
+from bv.orchestrator.assets import get_asset, list_assets
+from bv.orchestrator.queues import dequeue, enqueue, list_queues
+
 from bv.services.commands import (
 	ValidationResult,
 	add_entrypoint,
@@ -23,6 +28,137 @@ from bv.services.commands import (
 app = typer.Typer(help="CLI for the Bot Velocity RPA & Agentic Platform")
 entry_app = typer.Typer(help="Manage project entrypoints")
 app.add_typer(entry_app, name="entry")
+
+auth_app = typer.Typer(help="Developer-mode authentication against Orchestrator")
+app.add_typer(auth_app, name="auth")
+
+assets_app = typer.Typer(help="Read-only access to Orchestrator Assets (dev mode)")
+app.add_typer(assets_app, name="assets")
+
+queues_app = typer.Typer(help="Access Orchestrator Queues (dev mode)")
+app.add_typer(queues_app, name="queues")
+
+
+@auth_app.command("login", help="Authenticate this machine for SDK developer mode")
+def auth_login(
+	api_url: str = typer.Option(..., "--api-url", help="Orchestrator API base URL (e.g. http://127.0.0.1:8000)"),
+	ui_url: str = typer.Option(..., "--ui-url", help="Orchestrator UI base URL (e.g. http://localhost:5173)"),
+) -> None:
+	try:
+		def _started(session_id: str, reused: bool, target: str) -> None:
+			if reused:
+				typer.echo("Reusing existing auth session …")
+			typer.echo(f"Opening browser for login: {target}")
+			typer.echo(
+			"If you are redirected to dashboard after login, ensure the URL still contains "
+			"#/sdk-auth?session_id=..."
+		)
+
+		def _waiting() -> None:
+			typer.echo("Waiting for browser authentication… (open tab if not already)")
+
+		result = interactive_login(api_url=api_url, ui_url=ui_url, on_started=_started, on_waiting=_waiting)
+		save_auth_context(result.auth_context)
+		username = result.auth_context.user.username or "<unknown>"
+		typer.echo(f"Authenticated as {username}. Auth stored in ~/.bv/auth.json")
+	except (AuthError, LoginError) as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+
+@auth_app.command("status", help="Show current SDK authentication status")
+def auth_status() -> None:
+	ctx, err = try_load_auth_context()
+	if ctx is None:
+		typer.echo("Not logged in")
+		if err:
+			typer.echo(f"Details: {err}")
+		raise typer.Exit(code=0)
+
+	expired = ctx.is_expired()
+	typer.echo("Logged in" if not expired else "Not logged in (token expired)")
+	typer.echo(f"api_url: {ctx.api_url}")
+	typer.echo(f"ui_url: {ctx.ui_url}")
+	typer.echo(f"expires_at: {ctx.expires_at.isoformat()}")
+	typer.echo(f"username: {ctx.user.username or '<unknown>'}")
+	typer.echo(f"machine_name: {ctx.machine_name}")
+
+
+@auth_app.command("logout", help="Delete local SDK authentication")
+def auth_logout_cmd() -> None:
+	try:
+		deleted = auth_logout()
+		if deleted:
+			typer.echo("Logged out (deleted ~/.bv/auth.json)")
+		else:
+			typer.echo("Not logged in")
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+
+@assets_app.command("list", help="List assets")
+def assets_list(
+	search: Optional[str] = typer.Option(None, "--search", help="Search assets"),
+) -> None:
+	try:
+		assets = list_assets(search=search)
+		payload = [a.to_public_dict() for a in assets]
+		typer.echo(json.dumps(payload, indent=2))
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+
+@assets_app.command("get", help="Get an asset by name")
+def assets_get(
+	name: str = typer.Argument(..., help="Asset name"),
+) -> None:
+	try:
+		asset = get_asset(name)
+		typer.echo(json.dumps(asset.to_public_dict(), indent=2))
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+
+@queues_app.command("list", help="List queues")
+def queues_list() -> None:
+	try:
+		qs = list_queues()
+		typer.echo(json.dumps([{"name": q.name} for q in qs], indent=2))
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+
+@queues_app.command("put", help="Enqueue a queue item")
+def queues_put(
+	queue_name: str = typer.Argument(..., help="Queue name"),
+	input: Path = typer.Option(..., "--input", help="Path to JSON payload"),
+) -> None:
+	try:
+		raw = input.read_bytes().decode("utf-8-sig")
+		payload = json.loads(raw)
+		if not isinstance(payload, dict):
+			raise ValueError("Input JSON must be an object (mapping)")
+		result = enqueue(queue_name, payload)
+		typer.echo(json.dumps(result, indent=2) if result is not None else "null")
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+
+@queues_app.command("get", help="Dequeue the next available item")
+def queues_get(
+	queue_name: str = typer.Argument(..., help="Queue name"),
+) -> None:
+	try:
+		item = dequeue(queue_name)
+		typer.echo(json.dumps(item, indent=2) if item is not None else "null")
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
 
 
 @app.command(help="Initialize a new project (config + venv)")
