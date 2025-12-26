@@ -1,0 +1,7 @@
+name: _smoke_project
+version: 0.0.2
+entrypoints:
+- name: main
+  command: main:main
+  default: true
+venv_dir: .venv

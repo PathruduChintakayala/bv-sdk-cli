@@ -1,0 +1,29 @@
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bv-sdk-cli"
+version = "0.1.0"
+description = "CLI for the Bot Velocity RPA & Agentic Platform"
+requires-python = ">=3.10"
+authors = [{ name = "Bot Velocity Team" }]
+dependencies = [
+	"typer>=0.12",
+	"pyyaml>=6.0",
+]
+readme = "README.md"
+license = { text = "Proprietary" }
+keywords = ["bot-velocity", "rpa", "agentic", "cli"]
+
+[project.scripts]
+bv = "bv.cli:app"
+
+[tool.typer]
+pretty_exceptions_show_locals = false
+pretty_exceptions_short = true
+add_completion = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bv"]

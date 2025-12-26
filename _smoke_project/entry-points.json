@@ -1,0 +1,11 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "filePath": "main.py",
+      "function": "main",
+      "type": "agent",
+      "default": true
+    }
+  ]
+}
