@@ -11,6 +11,7 @@ from bv.auth.context import AuthError, logout as auth_logout, save_auth_context,
 from bv.auth.login import LoginError, interactive_login
 from bv.orchestrator.assets import get_asset, list_assets
 from bv.orchestrator.queues import dequeue, enqueue, list_queues
+from bv.orchestrator.client import OrchestratorClient, OrchestratorError
 
 from bv.services.commands import (
 	ValidationResult,
@@ -23,6 +24,8 @@ from bv.services.commands import (
 	set_default_entrypoint,
 	validate_project,
 )
+
+from bv.project.config import ProjectConfigLoader
 
 
 app = typer.Typer(help="CLI for the Bot Velocity RPA & Agentic Platform")
@@ -37,6 +40,9 @@ app.add_typer(assets_app, name="assets")
 
 queues_app = typer.Typer(help="Access Orchestrator Queues (dev mode)")
 app.add_typer(queues_app, name="queues")
+
+publish_app = typer.Typer(help="Publish packages")
+app.add_typer(publish_app, name="publish")
 
 
 @auth_app.command("login", help="Authenticate this machine for SDK developer mode")
@@ -234,8 +240,9 @@ def build(
 	typer.echo(f"Package ready: {package_path}")
 
 
-@app.command(help="Publish (finalize) a .bvpackage locally")
-def publish(
+
+@publish_app.command("local", help="Publish (finalize) a .bvpackage locally")
+def publish_local(
 	package: Optional[Path] = typer.Argument(None, help="Path to an existing .bvpackage; if absent, build first"),
 	config: Path = typer.Option(Path("bvproject.yaml"), help="Path to bvproject.yaml for validation/build"),
 	output_dir: Path = typer.Option(Path("published"), help="Directory to place the published artifact"),
@@ -273,6 +280,75 @@ def publish(
 		dry_run=dry_run,
 	)
 	typer.echo(f"Published to {destination}")
+
+
+@publish_app.command("orchestrator", help="Publish a .bvpackage to BV Orchestrator")
+def publish_orchestrator(
+	config: Path = typer.Option(Path("bvproject.yaml"), help="Path to bvproject.yaml"),
+	include: List[Path] = typer.Option(
+		None,
+		help="Additional project-relative paths to include during build",
+	),
+) -> None:
+	# 1) Load project metadata (fail fast for missing config / invalid SemVer)
+	try:
+		cfg = ProjectConfigLoader(config.resolve()).load()
+	except FileNotFoundError:
+		typer.echo(f"ERROR: bvproject.yaml is missing at {config}")
+		raise typer.Exit(code=1)
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+	# 2) Build the package using existing deterministic build logic
+	try:
+		package_path = build_package(
+			config_path=config,
+			output=None,
+			include=include,
+			dry_run=False,
+		)
+	except Exception as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+	client = OrchestratorClient()
+
+	# 3) Preflight
+	try:
+		resp = client.request(
+			"POST",
+			"/api/packages/preflight",
+			json={"name": cfg.name, "version": cfg.version},
+		)
+	except OrchestratorError as exc:
+		typer.echo(f"ERROR: {exc}")
+		raise typer.Exit(code=1)
+
+	data = resp.data
+	if not isinstance(data, dict):
+		typer.echo("ERROR: Preflight returned an unexpected response")
+		raise typer.Exit(code=1)
+
+	if not bool(data.get("can_publish")):
+		reason = data.get("reason") or data.get("message") or data.get("detail") or "Publish rejected"
+		typer.echo(str(reason))
+		raise typer.Exit(code=1)
+
+	# 4) Upload
+	try:
+		with package_path.open("rb") as handle:
+			files = {"file": (package_path.name, handle, "application/octet-stream")}
+			client.request("POST", "/api/packages/upload", files=files)
+	except OrchestratorError as exc:
+		typer.echo(f"ERROR: Failed to upload package: {exc}")
+		raise typer.Exit(code=1)
+	except Exception as exc:
+		typer.echo(f"ERROR: Failed to upload package: {exc}")
+		raise typer.Exit(code=1)
+
+	# 5) Success output
+	typer.echo(f"Published {cfg.name}@{cfg.version} to {client.base_url}")
 
 
 @app.command(help="Run a configured entrypoint locally")

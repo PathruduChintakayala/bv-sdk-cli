@@ -14,6 +14,11 @@ dependencies = [
 	"pyyaml>=6.0",
 	"requests>=2.32",
 ]
+
+[project.optional-dependencies]
+dev = [
+	"pytest>=8.0",
+]
 readme = "README.md"
 license = { text = "Proprietary" }
 keywords = ["bot-velocity", "rpa", "agentic", "cli"]
