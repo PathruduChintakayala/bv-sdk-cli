@@ -1,0 +1,8 @@
+project:
+  name: random-user
+  version: 1.0.3
+  description: Fetch random user and log name
+  entrypoint: main.py
+  python_version: "3.11.1"
+  dependencies:
+    - requests>=2.31.0
