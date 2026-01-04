@@ -73,20 +73,50 @@ dependencies = []
 
 - `pip install -e .`
 
-2) Initialize a project in an empty folder:
+2) Initialize a project in the current directory:
 
-- `bv init [--name <project-name>] [--python <python-exe>]`
+- `bv init [<project-name>] [--python-version <version>]`
 
 Behavior:
 
+- Creates project structure in the current directory (does not create a new folder).
 - Fails if `bvproject.yaml` already exists.
-- Creates `.venv/` (project-scoped venv) and `dist/`.
-- Generates only: `main.py`, `entry-points.json`, `bindings.json`, `bvproject.yaml`, `pyproject.toml`.
-- Does NOT create `src/` or `tests/`.
-- Initial version is always `0.0.0`.
+- Creates `dist/` folder for build artifacts.
+- Generates only: `main.py`, `bvproject.yaml`.
+- Does NOT create `src/`, `tests/`, or `.venv/`.
+- Initial version is always `1.0.0`.
 - Project name is resolved as:
-	- if `--name` provided: use it
+	- if `<project-name>` argument provided: use it for `bvproject.yaml`
 	- else: use the current directory name (`Path.cwd().name`)
+
+Example workflow:
+```bash
+# 1. Create project directory
+mkdir my-automation
+cd my-automation
+
+# 2. Create and activate virtual environment
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Unix/Mac:
+source .venv/bin/activate
+
+# 3. Initialize BV project (venv should be activated)
+bv init my-automation  # or just: bv init (uses directory name)
+```
+
+**Important:** After initialization, you must manually create a virtual environment:
+
+```bash
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Unix/Mac:
+source .venv/bin/activate
+```
+
+Then install your project dependencies (after running `bv build`, which generates `requirements.lock`).
 
 3) Validate configuration and entrypoints:
 
@@ -228,7 +258,9 @@ They fail fast if used outside of `bv run` or if you are not authenticated.
 Notes:
 
 - `bv build` MUST NOT change the version.
-- Build generates `requirements.lock` from the project’s venv as part of packaging.
+- Build generates `requirements.lock` from the project's dependencies listed in `bvproject.yaml`.
+- The `requirements.lock` file is created/updated in the project root and included in the package.
+- Ensure your virtual environment is activated and dependencies are installed before building.
 
 6) Publish locally (auto-increments version):
 
@@ -240,7 +272,7 @@ Notes:
 Publish behavior:
 
 - Bumps the version in `bvproject.yaml` (unless `--dry-run`).
-- Persists the bumped version first, then builds (if needed) using the bumped version.
+- Persists the bumped version first, then builds the package (which generates `requirements.lock`).
 - Copies (or moves) the artifact into `./published/<name>/<version>/`.
 - Never overwrites an existing artifact unless `--overwrite` is passed.
 
@@ -295,10 +327,10 @@ The archive is written deterministically (fixed ZIP timestamps and stable orderi
 
 ## Versioning rules
 
-- Initial version after `bv init` is always `0.0.0`.
+- Initial version after `bv init` is always `1.0.0`.
 - `bv build` never mutates version.
 - `bv publish` auto-increments version unless `--dry-run` (and the build, if triggered, uses that bumped version).
-	- default is PATCH: `0.0.0 → 0.0.1 → 0.0.2`
+	- default is PATCH: `1.0.0 → 1.0.1 → 1.0.2`
 	- optional flags: `--major`, `--minor`, `--patch` (default)
 - Only `bvproject.yaml` is updated; `pyproject.toml` is not used for name/version.
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -92,6 +92,21 @@ def save_auth_context(ctx: AuthContext) -> None:
 
 
 def load_auth_context() -> AuthContext:
+    # 1. Check environment variables (Runner mode)
+    env_url = os.environ.get("BV_ORCHESTRATOR_URL")
+    env_token = os.environ.get("BV_ROBOT_TOKEN")
+    if env_url and env_token:
+        robot_name = os.environ.get("BV_ROBOT_NAME", "unknown")
+        return AuthContext(
+            api_url=_normalize_base_url(env_url),
+            ui_url=_normalize_base_url(env_url), # Best effort
+            access_token=env_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=365), # Long-lived robot token
+            user=AuthUser(id=None, username=f"robot:{robot_name}"),
+            machine_name=os.environ.get("BV_MACHINE_NAME", "runner-machine"),
+        )
+
+    # 2. Check local auth file (Developer mode)
     path = auth_file_path()
     if not path.exists():
         raise AuthError("Not authenticated. Run bv auth login")

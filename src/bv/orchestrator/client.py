@@ -37,10 +37,14 @@ class OrchestratorClient:
 
     def _headers(self) -> Dict[str, str]:
         ctx = self._auth()
-        return {
-            "Authorization": f"Bearer {ctx.access_token}",
+        headers = {
             "Accept": "application/json",
         }
+        if ctx.user and ctx.user.username and ctx.user.username.startswith("robot:"):
+            headers["X-Robot-Token"] = ctx.access_token
+        else:
+            headers["Authorization"] = f"Bearer {ctx.access_token}"
+        return headers
 
     def request(
         self,
@@ -70,6 +74,14 @@ class OrchestratorClient:
         if resp.status_code == 401:
             raise OrchestratorError("Not authenticated. Run bv auth login")
         if resp.status_code == 403:
+            # Try to extract detailed permission error message
+            try:
+                error_data = resp.json()
+                detail = error_data.get("detail") if isinstance(error_data, dict) else None
+                if detail:
+                    raise OrchestratorError(f"Permission denied: {detail}")
+            except Exception:
+                pass
             raise OrchestratorError("Permission denied")
 
         data_out: Any
