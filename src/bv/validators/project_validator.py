@@ -7,6 +7,8 @@ from typing import List, Tuple
 
 import yaml
 
+from bv.project.config import DEFAULT_PROJECT_TYPE, PROJECT_TYPES
+
 ENTRYPOINT_PATTERN = re.compile(r"^(?:[A-Za-z0-9_\.]+:[A-Za-z_][A-Za-z0-9_]*|.*\.py)$")
 SEMVER_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$")
 # Accept 3.8, 3.11, or 3.11.1 style versions
@@ -64,6 +66,17 @@ class ProjectValidator:
         for field in required:
             if field not in project or project[field] in (None, ""):
                 self.errors.append(f"ERROR: Missing required field project.{field}")
+
+        raw_type = project.get("type")
+        if raw_type is None or str(raw_type).strip() == "":
+            self.warnings.append("WARNING: project.type is missing; defaulting to 'rpa' for backward compatibility")
+            project["type"] = DEFAULT_PROJECT_TYPE
+        else:
+            project_type = str(raw_type).strip().lower()
+            if project_type not in PROJECT_TYPES:
+                self.errors.append("ERROR: project.type must be one of: rpa, agent")
+            else:
+                project["type"] = project_type
 
         # Support both new format (entrypoints) and legacy format (entrypoint)
         entrypoints = project.get("entrypoints")

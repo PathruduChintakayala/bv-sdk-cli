@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import yaml
 from pathlib import Path
 from typing import List, Optional
@@ -164,19 +163,21 @@ def queues_get(
 
 @app.command(help="Initialize a new project in the current directory (minimal: bvproject.yaml + main.py)")
 def init(
-	name: str = typer.Argument(None, help="Project name for bvproject.yaml (defaults to current directory name)"),
+	name: str = typer.Option(..., "--name", help="Project name for bvproject.yaml"),
+	project_type: str = typer.Option(..., "--type", help="Project type (rpa or agent)"),
 	python_version: str = typer.Option("3.8", "--python-version", help="Python version to record in bvproject.yaml"),
 	keep_main: bool = typer.Option(False, "--keep-main", help="Do not overwrite existing main.py"),
 ) -> None:
-	import os
-	# Use current directory name if project name not provided
-	if name is None:
-		name = Path(os.getcwd()).name
-		if not name or name == ".":
-			raise typer.BadParameter("Cannot determine project name from current directory. Please provide project name as argument: bv init <project-name>")
-	
+	name = (name or "").strip()
+	if not name:
+		raise typer.BadParameter("--name is required")
+
+	project_type_normalized = (project_type or "").strip().lower()
+	if project_type_normalized not in ("rpa", "agent"):
+		raise typer.BadParameter("--type must be one of: rpa, agent")
+
 	try:
-		init_project(project_name=name, python_version=python_version, keep_main=keep_main)
+		init_project(project_name=name, project_type=project_type_normalized, python_version=python_version, keep_main=keep_main)
 		typer.echo(f"Initialized project '{name}' in current directory")
 		typer.echo(f"Created bvproject.yaml, main.py, and dist/ folder")
 		typer.echo(f"\nNext steps:")

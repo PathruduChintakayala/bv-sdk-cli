@@ -16,18 +16,20 @@ from bv.validators.project_validator import ProjectValidator
 from bv.tools.lock_generator import RequirementsLockGenerator
 
 
-INIT_BVPROJECT_TEMPLATE = """project:
-  name: {project_name}
-  version: 1.0.0
-  description: A simple BV project
-  entrypoints:
-    - name: main
-      command: main:main
-      default: true
-  venv_dir: .venv
-  python_version: "{python_version}"
-  dependencies: ["bv-runtime"]
-"""
+INIT_BVPROJECT_TEMPLATE = (
+    "project:\n"
+    "  name: {project_name}\n"
+    "  type: {project_type}\n"
+    "  version: 0.0.0\n"
+    "  description: A simple BV project\n"
+    "  entrypoints:\n"
+    "    - name: main\n"
+    "      command: main:main\n"
+    "      default: true\n"
+    "  venv_dir: .venv\n"
+    "  python_version: \"{python_version}\"\n"
+    "  dependencies: [\"bv-runtime\"]\n"
+)
 
 INIT_MAIN_TEMPLATE = '''"""
 Main entry point for BV project.
@@ -55,6 +57,7 @@ def _atomic_write(path: Path, content: str) -> None:
 
 def init_project(
     project_name: str,
+    project_type: str,
     python_version: str = "3.8",
     keep_main: bool = False,
 ) -> None:
@@ -69,7 +72,7 @@ def init_project(
     # bvproject.yaml
     _atomic_write(
         project_root / "bvproject.yaml",
-        INIT_BVPROJECT_TEMPLATE.format(project_name=project_name, python_version=python_version),
+        INIT_BVPROJECT_TEMPLATE.format(project_name=project_name, project_type=project_type, python_version=python_version),
     )
 
     # main.py (respect --keep-main)
