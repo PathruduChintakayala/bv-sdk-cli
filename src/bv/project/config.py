@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import List, Literal, Mapping, Optional
 
 import yaml
 
@@ -14,6 +14,9 @@ SEMVER_PATTERN = re.compile(
 )
 # Python version like 3.8 or 3.11.1
 PY_VERSION_PATTERN = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
+
+PROJECT_TYPES: set[str] = {"rpa", "agent"}
+DEFAULT_PROJECT_TYPE = "rpa"
 
 
 def bump_semver(version: str, part: str) -> str:
@@ -54,6 +57,7 @@ class ProjectConfig:
     """Minimal BV project config"""
 
     name: str
+    type: Literal["rpa", "agent"]
     version: str
     description: str
     entrypoints: List[EntryPoint]
@@ -65,6 +69,10 @@ class ProjectConfig:
         errors: List[str] = []
         if not self.name:
             errors.append("project.name is required")
+        if not self.type:
+            errors.append("project.type is required")
+        elif self.type not in PROJECT_TYPES:
+            errors.append("project.type must be one of: rpa, agent")
         if not self.version:
             errors.append("project.version is required")
         elif not SEMVER_PATTERN.match(self.version):
@@ -112,6 +120,7 @@ class ProjectConfig:
         return {
             "project": {
                 "name": self.name,
+                "type": self.type,
                 "version": self.version,
                 "description": self.description,
                 "entrypoints": entries,
@@ -127,8 +136,10 @@ class ProjectConfigLoader:
 
     def __init__(self, config_path: Path) -> None:
         self.config_path = config_path
+        self.warnings: List[str] = []
 
     def load(self) -> ProjectConfig:
+        self.warnings = []
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config not found at {self.config_path}")
 
@@ -142,6 +153,15 @@ class ProjectConfigLoader:
         project = raw.get("project")
         if not isinstance(project, Mapping):
             project = raw
+
+        raw_type = project.get("type")
+        if raw_type is None or str(raw_type).strip() == "":
+            project_type = DEFAULT_PROJECT_TYPE
+            self.warnings.append("project.type is missing; defaulting to 'rpa' for backward compatibility")
+        else:
+            project_type = str(raw_type).strip().lower()
+            if project_type not in PROJECT_TYPES:
+                raise ValueError("project.type must be one of: rpa, agent")
 
         # Load entrypoints
         entrypoints = []
@@ -167,6 +187,7 @@ class ProjectConfigLoader:
 
         cfg = ProjectConfig(
             name=str(project.get("name") or ""),
+            type=project_type,
             version=str(project.get("version") or ""),
             description=str(project.get("description") or ""),
             entrypoints=entrypoints,
