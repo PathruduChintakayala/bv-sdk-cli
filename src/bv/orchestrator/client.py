@@ -21,14 +21,16 @@ class OrchestratorClient:
         *,
         auth_context: AuthContext | None = None,
         timeout_seconds: int = 30,
+        prefer_robot_tokens: bool | None = None,
     ) -> None:
         self._timeout_seconds = timeout_seconds
         self._ctx = auth_context
         self._client = httpx.Client(timeout=float(timeout_seconds))
+        self._prefer_robot_tokens = prefer_robot_tokens
 
     def _auth(self) -> AuthContext:
         if self._ctx is None:
-            self._ctx = require_auth()
+            self._ctx = require_auth(prefer_robot_tokens=self._prefer_robot_tokens)
         return self._ctx
 
     @property

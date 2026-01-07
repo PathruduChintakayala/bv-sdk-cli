@@ -91,26 +91,19 @@ def save_auth_context(ctx: AuthContext) -> None:
     _atomic_write_json(auth_file_path(), payload)
 
 
-def load_auth_context() -> AuthContext:
-    # 1. Check environment variables (Runner mode)
-    env_url = os.environ.get("BV_ORCHESTRATOR_URL")
-    env_token = os.environ.get("BV_ROBOT_TOKEN")
-    if env_url and env_token:
-        robot_name = os.environ.get("BV_ROBOT_NAME", "unknown")
-        return AuthContext(
-            api_url=_normalize_base_url(env_url),
-            ui_url=_normalize_base_url(env_url), # Best effort
-            access_token=env_token,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=365), # Long-lived robot token
-            user=AuthUser(id=None, username=f"robot:{robot_name}"),
-            machine_name=os.environ.get("BV_MACHINE_NAME", "runner-machine"),
-        )
+def _robot_auth_context(env_url: str, env_token: str) -> AuthContext:
+    robot_name = os.environ.get("BV_ROBOT_NAME", "unknown")
+    return AuthContext(
+        api_url=_normalize_base_url(env_url),
+        ui_url=_normalize_base_url(env_url), # Best effort
+        access_token=env_token,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=365), # Long-lived robot token
+        user=AuthUser(id=None, username=f"robot:{robot_name}"),
+        machine_name=os.environ.get("BV_MACHINE_NAME", "runner-machine"),
+    )
 
-    # 2. Check local auth file (Developer mode)
-    path = auth_file_path()
-    if not path.exists():
-        raise AuthError("Not authenticated. Run bv auth login")
 
+def _load_local_auth_file(path: Path) -> AuthContext:
     try:
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
@@ -161,7 +154,7 @@ def load_auth_context() -> AuthContext:
         except Exception:
             user_id = None
 
-    ctx = AuthContext(
+    return AuthContext(
         api_url=api_url,
         ui_url=ui_url,
         access_token=access_token,
@@ -173,7 +166,36 @@ def load_auth_context() -> AuthContext:
         machine_name=machine_name,
     )
 
-    return ctx
+
+def load_auth_context(*, prefer_robot_tokens: bool | None = None) -> AuthContext:
+    """
+    Resolve auth context with sensible priority.
+
+    Priority:
+    1) Robot token via env when explicitly preferred (BV_SDK_RUN=1 or prefer_robot_tokens=True)
+    2) Local developer auth file (~/.bv/auth.json)
+    3) Robot token via env as a fallback when no file is present
+    """
+
+    env_url = os.environ.get("BV_ORCHESTRATOR_URL")
+    env_token = os.environ.get("BV_ROBOT_TOKEN")
+    robot_available = bool(env_url and env_token)
+
+    prefer_robot = bool(prefer_robot_tokens) if prefer_robot_tokens is not None else (os.environ.get("BV_SDK_RUN") == "1")
+
+    if prefer_robot and robot_available:
+        return _robot_auth_context(env_url, env_token)
+
+    # Check local auth file (Developer mode)
+    path = auth_file_path()
+    if path.exists():
+        return _load_local_auth_file(path)
+
+    # Fallback to robot token when no developer auth is present
+    if robot_available:
+        return _robot_auth_context(env_url, env_token)
+
+    raise AuthError("Not authenticated. Run bv auth login")
 
 
 def try_load_auth_context() -> tuple[AuthContext | None, str | None]:
@@ -200,19 +222,19 @@ def logout() -> bool:
     return True
 
 
-def require_auth() -> AuthContext:
-    """Load and validate the developer auth context.
+def require_auth(*, prefer_robot_tokens: bool | None = None) -> AuthContext:
+    """Load and validate the auth context.
 
-    Raises clear errors for:
-    - not logged in
-    - token expired
+    prefer_robot_tokens allows callers (e.g. runtime) to explicitly prefer
+    robot tokens supplied via environment variables. CLI commands should rely
+    on the default, which favors local developer auth when available.
     """
-    ctx = load_auth_context()
+    ctx = load_auth_context(prefer_robot_tokens=prefer_robot_tokens)
     if ctx.is_expired():
         raise AuthError("Token expired. Run bv auth login")
     return ctx
 
 
 # Backward-compatible alias for existing internal usage.
-def get_auth_context() -> AuthContext:
-    return require_auth()
+def get_auth_context(*, prefer_robot_tokens: bool | None = None) -> AuthContext:
+    return require_auth(prefer_robot_tokens=prefer_robot_tokens)
