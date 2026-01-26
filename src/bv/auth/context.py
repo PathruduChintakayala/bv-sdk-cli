@@ -25,6 +25,7 @@ class AuthMachine:
 
 @dataclass(frozen=True)
 class AuthContext:
+    base_url: str
     api_url: str
     ui_url: str
     access_token: str
@@ -69,6 +70,13 @@ def _normalize_base_url(url: str) -> str:
     return u.rstrip("/")
 
 
+def _normalize_root_url(url: str) -> str:
+    base = _normalize_base_url(url)
+    if base.endswith("/api"):
+        return base[:-4]
+    return base
+
+
 def _atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -78,6 +86,7 @@ def _atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
 
 def save_auth_context(ctx: AuthContext) -> None:
     payload: dict[str, Any] = {
+        "base_url": _normalize_root_url(ctx.base_url),
         "api_url": _normalize_base_url(ctx.api_url),
         "ui_url": _normalize_base_url(ctx.ui_url),
         "access_token": ctx.access_token,
@@ -93,13 +102,15 @@ def save_auth_context(ctx: AuthContext) -> None:
 
 def load_auth_context() -> AuthContext:
     # 1. Check environment variables (Runner mode)
-    env_url = os.environ.get("BV_ORCHESTRATOR_URL")
+    env_url = os.environ.get("BV_BASE_URL") or os.environ.get("BV_ORCHESTRATOR_URL")
     env_token = os.environ.get("BV_ROBOT_TOKEN")
     if env_url and env_token:
         robot_name = os.environ.get("BV_ROBOT_NAME", "unknown")
+        base_url = _normalize_root_url(env_url)
         return AuthContext(
-            api_url=_normalize_base_url(env_url),
-            ui_url=_normalize_base_url(env_url), # Best effort
+            base_url=base_url,
+            api_url=_normalize_base_url(base_url),
+            ui_url=_normalize_base_url(base_url), # Best effort
             access_token=env_token,
             expires_at=datetime.now(timezone.utc) + timedelta(days=365), # Long-lived robot token
             user=AuthUser(id=None, username=f"robot:{robot_name}"),
@@ -121,18 +132,27 @@ def load_auth_context() -> AuthContext:
         raise AuthError(f"Invalid auth file at {path}: expected JSON object")
 
     # New schema (preferred)
+    base_url_raw = data.get("base_url")
     api_url_raw = data.get("api_url")
     ui_url_raw = data.get("ui_url")
 
     # Backward compat: older schema used orchestrator_url.
+    if base_url_raw is None and data.get("orchestrator_url") is not None:
+        base_url_raw = data.get("orchestrator_url")
     if api_url_raw is None and data.get("orchestrator_url") is not None:
         api_url_raw = data.get("orchestrator_url")
     if ui_url_raw is None and data.get("orchestrator_url") is not None:
         # Best-effort: in older schema we didn't know ui_url; keep same base.
         ui_url_raw = data.get("orchestrator_url")
 
-    api_url = _normalize_base_url(str(api_url_raw or ""))
-    ui_url = _normalize_base_url(str(ui_url_raw or ""))
+    if api_url_raw is None and base_url_raw is not None:
+        api_url_raw = base_url_raw
+    if ui_url_raw is None and base_url_raw is not None:
+        ui_url_raw = base_url_raw
+
+    base_url = _normalize_root_url(str(base_url_raw or api_url_raw or ui_url_raw or ""))
+    api_url = _normalize_base_url(str(api_url_raw or base_url))
+    ui_url = _normalize_base_url(str(ui_url_raw or base_url))
     access_token = str(data.get("access_token") or "").strip()
     if not access_token:
         raise AuthError("Invalid auth file: missing access_token. Run bv auth login")
@@ -162,6 +182,7 @@ def load_auth_context() -> AuthContext:
             user_id = None
 
     ctx = AuthContext(
+        base_url=base_url,
         api_url=api_url,
         ui_url=ui_url,
         access_token=access_token,

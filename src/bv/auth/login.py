@@ -4,6 +4,7 @@ import base64
 import json
 import platform
 import time
+import warnings
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +31,13 @@ def _normalize_base_url(url: str) -> str:
     if not u:
         raise LoginError("Orchestrator URL is missing")
     return u.rstrip("/")
+
+
+def _normalize_root_url(url: str) -> str:
+    base = _normalize_base_url(url)
+    if base.endswith("/api"):
+        return base[:-4]
+    return base
 
 
 def _parse_iso8601(value: str) -> datetime:
@@ -79,8 +87,8 @@ def _infer_user_from_token(token: str) -> AuthUser:
     return AuthUser(id=user_id, username=username)
 
 
-def open_auth_browser(orchestrator_url: str, session_id: str) -> str:
-    base = _normalize_base_url(orchestrator_url)
+def open_auth_browser(ui_url: str, session_id: str) -> str:
+    base = _normalize_base_url(ui_url)
     # Preserve any existing path/query on ui_url; set fragment to the required route.
     parts = urlsplit(base)
     fragment = f"/sdk-auth?session_id={session_id}"
@@ -91,6 +99,63 @@ def open_auth_browser(orchestrator_url: str, session_id: str) -> str:
         # Still return the URL so the caller can print it.
         pass
     return target
+
+
+def _discover_endpoints(base_url: str) -> tuple[str, str]:
+    """Best-effort endpoint discovery from a base URL."""
+    discovery_url = f"{base_url}/.well-known/bv-orchestrator"
+    try:
+        resp = requests.get(discovery_url, timeout=5)
+    except requests.RequestException:
+        return base_url, base_url
+
+    if resp.status_code >= 400:
+        return base_url, base_url
+
+    try:
+        data = resp.json()
+    except Exception:
+        return base_url, base_url
+
+    if not isinstance(data, dict):
+        return base_url, base_url
+
+    api_base = str(data.get("api_base_url") or data.get("api_url") or "").strip() or base_url
+    ui_base = str(data.get("ui_base_url") or data.get("ui_url") or "").strip() or base_url
+    return api_base, ui_base
+
+
+def _resolve_login_urls(
+    *,
+    base_url: str | None,
+    api_url: str | None,
+    ui_url: str | None,
+) -> tuple[str, str, str]:
+    if base_url:
+        if api_url or ui_url:
+            warnings.warn(
+                "Ignoring --api-url/--ui-url because --base-url was provided.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        base = _normalize_root_url(base_url)
+        api_base, ui_base = _discover_endpoints(base)
+        return base, _normalize_base_url(api_base or base), _normalize_base_url(ui_base or base)
+
+    if api_url or ui_url:
+        warnings.warn(
+            "Passing --api-url/--ui-url is deprecated. Use --base-url instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if not api_url or not ui_url:
+            raise LoginError("Both --api-url and --ui-url are required when --base-url is not provided.")
+        api_base = _normalize_base_url(api_url)
+        ui_base = _normalize_base_url(ui_url)
+        base = _normalize_root_url(ui_base or api_base)
+        return base, api_base, ui_base
+
+    raise LoginError("Base URL is missing. Provide --base-url (preferred).")
 
 
 def start_auth_session(api_url: str, machine_name: str) -> tuple[str, bool]:
@@ -205,14 +270,18 @@ def poll_for_token(
 
 
 def interactive_login(
-    api_url: str,
-    ui_url: str,
     *,
+    base_url: str | None = None,
+    api_url: str | None = None,
+    ui_url: str | None = None,
     on_started: Callable[[str, bool, str], None] | None = None,
     on_waiting: Callable[[], None] | None = None,
 ) -> LoginResult:
-    api_base = _normalize_base_url(api_url)
-    ui_base = _normalize_base_url(ui_url)
+    base_url, api_base, ui_base = _resolve_login_urls(
+        base_url=base_url,
+        api_url=api_url,
+        ui_url=ui_url,
+    )
 
     machine_name = platform.node() or "<unknown>"
     session_id, reused = start_auth_session(api_base, machine_name=machine_name)
@@ -245,6 +314,7 @@ def interactive_login(
     machine_name = platform.node() or None
 
     ctx = AuthContext(
+        base_url=base_url,
         api_url=api_base,
         ui_url=ui_base,
         access_token=access_token,

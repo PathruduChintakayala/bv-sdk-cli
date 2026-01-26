@@ -20,6 +20,7 @@ from bv.services.commands import (
 	init_project,
 	publish_package,
 	run_project,
+	validate_project,
 )
 
 from bv.project.config import ProjectConfigLoader, bump_semver
@@ -41,8 +42,9 @@ app.add_typer(publish_app, name="publish")
 
 @auth_app.command("login", help="Authenticate this machine for SDK developer mode")
 def auth_login(
-	api_url: str = typer.Option(..., "--api-url", help="Orchestrator API base URL (e.g. http://127.0.0.1:8000)"),
-	ui_url: str = typer.Option(..., "--ui-url", help="Orchestrator UI base URL (e.g. http://localhost:5173)"),
+	base_url: str = typer.Option(None, "--base-url", help="Orchestrator base URL (e.g. https://cloud.botvelocity.com)"),
+	api_url: str = typer.Option(None, "--api-url", help="(Deprecated) Orchestrator API base URL"),
+	ui_url: str = typer.Option(None, "--ui-url", help="(Deprecated) Orchestrator UI base URL"),
 ) -> None:
 	try:
 		def _started(session_id: str, reused: bool, target: str) -> None:
@@ -57,12 +59,18 @@ def auth_login(
 		def _waiting() -> None:
 			typer.echo("Waiting for browser authentication… (open tab if not already)")
 
-		result = interactive_login(api_url=api_url, ui_url=ui_url, on_started=_started, on_waiting=_waiting)
+		result = interactive_login(
+			base_url=base_url,
+			api_url=api_url,
+			ui_url=ui_url,
+			on_started=_started,
+			on_waiting=_waiting,
+		)
 		save_auth_context(result.auth_context)
 		username = result.auth_context.user.username or "<unknown>"
 		typer.echo(f"Authenticated as {username}. Auth stored in ~/.bv/auth.json")
 	except (AuthError, LoginError) as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -77,6 +85,7 @@ def auth_status() -> None:
 
 	expired = ctx.is_expired()
 	typer.echo("Logged in" if not expired else "Not logged in (token expired)")
+	typer.echo(f"base_url: {ctx.base_url}")
 	typer.echo(f"api_url: {ctx.api_url}")
 	typer.echo(f"ui_url: {ctx.ui_url}")
 	typer.echo(f"expires_at: {ctx.expires_at.isoformat()}")
@@ -93,7 +102,7 @@ def auth_logout_cmd() -> None:
 		else:
 			typer.echo("Not logged in")
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -106,7 +115,7 @@ def assets_list(
 		payload = [a.to_public_dict() for a in assets]
 		typer.echo(json.dumps(payload, indent=2))
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -118,7 +127,7 @@ def assets_get(
 		asset = get_asset(name)
 		typer.echo(json.dumps(asset.to_public_dict(), indent=2))
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -128,7 +137,7 @@ def queues_list() -> None:
 		qs = list_queues()
 		typer.echo(json.dumps([{"name": q.name} for q in qs], indent=2))
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -145,7 +154,7 @@ def queues_put(
 		result = enqueue(queue_name, payload)
 		typer.echo(json.dumps(result, indent=2) if result is not None else "null")
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -157,7 +166,7 @@ def queues_get(
 		item = dequeue(queue_name)
 		typer.echo(json.dumps(item, indent=2) if item is not None else "null")
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -184,7 +193,7 @@ def init(
 		typer.echo(f"1. Run 'bv build' to generate requirements.lock")
 		typer.echo(f"2. Install dependencies: pip install -r requirements.lock")
 	except ValueError as e:
-		typer.echo(f"ERROR: {e}")
+		typer.echo(f"Error: {e}", err=True)
 		raise typer.Exit(code=1)
 
 
@@ -196,10 +205,10 @@ def validate(
 	result: ValidationResult = validate_project(config_path=config, project_root=project_root)
 	if not result.ok:
 		for err in result.errors:
-			typer.echo(f"ERROR: {err}")
+			typer.echo(f"Error: {err}", err=True)
 		raise typer.Exit(code=1)
 	for warn in result.warnings:
-		typer.echo(f"WARN: {warn}")
+		typer.echo(f"Warning: {warn}", err=True)
 	typer.echo("Project configuration is valid.")
 
 
@@ -239,7 +248,7 @@ def publish_local(
 			bump=bump,
 		)
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 	typer.echo(f"Published to {destination}")
 
@@ -259,10 +268,10 @@ def publish_orchestrator(
 	try:
 		cfg = ProjectConfigLoader(config.resolve()).load()
 	except FileNotFoundError:
-		typer.echo(f"ERROR: bvproject.yaml is missing at {config}")
+		typer.echo(f"Error: bvproject.yaml is missing at {config}", err=True)
 		raise typer.Exit(code=1)
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 	# 1.5) Bump version
@@ -274,7 +283,7 @@ def publish_orchestrator(
 			yaml.safe_dump(cfg.to_mapping(), handle, sort_keys=False)
 		typer.echo(f"Bumped version to {next_version}")
 	except Exception as exc:
-		typer.echo(f"ERROR: Failed to bump version: {exc}")
+		typer.echo(f"Error: Failed to bump version: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 	# 2) Build the package using new minimal builder
@@ -289,7 +298,7 @@ def publish_orchestrator(
 			dry_run=False,
 		)
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 	client = OrchestratorClient()
@@ -302,12 +311,12 @@ def publish_orchestrator(
 			json={"name": cfg.name, "version": cfg.version},
 		)
 	except OrchestratorError as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 	data = resp.data
 	if not isinstance(data, dict):
-		typer.echo("ERROR: Preflight returned an unexpected response")
+		typer.echo("Error: Preflight returned an unexpected response", err=True)
 		raise typer.Exit(code=1)
 
 	if not bool(data.get("can_publish")):
@@ -321,10 +330,10 @@ def publish_orchestrator(
 			files = {"file": (package_path.name, handle, "application/octet-stream")}
 			client.request("POST", "/api/packages/upload", files=files)
 	except OrchestratorError as exc:
-		typer.echo(f"ERROR: Failed to upload package: {exc}")
+		typer.echo(f"Error: Failed to upload package: {exc}", err=True)
 		raise typer.Exit(code=1)
 	except Exception as exc:
-		typer.echo(f"ERROR: Failed to upload package: {exc}")
+		typer.echo(f"Error: Failed to upload package: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 	# 5) Success output
@@ -339,7 +348,7 @@ def run(
 	try:
 		result = run_project(config_path=config, entrypoint_name=entry)
 	except Exception as exc:
-		typer.echo(f"ERROR: {exc}")
+		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
 
 	try:

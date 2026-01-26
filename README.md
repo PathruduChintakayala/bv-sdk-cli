@@ -10,7 +10,7 @@ A Typer-based developer CLI for building, validating, and publishing determinist
 ## 2. Project Philosophy
 - **Local-first design**: All core flows (init, validate, build, run) operate purely on local files. Only auth, assets, queues, and publish-orchestrator touch the network.
 - **Deterministic builds**: Builds always generate a fresh `requirements.lock` using a throwaway virtual environment (`.bv_tmp_venv`) and package a fixed set of files. Given the same inputs, contents are stable (ZIP timestamps follow the current clock, so byte-for-byte reproducibility is not guaranteed).
-- **Separation of dev vs runtime concerns**: SDK auth (human, short-lived) is stored in `~/.bv/auth.json`. Runner-mode auth comes from environment variables (`BV_ORCHESTRATOR_URL`, `BV_ROBOT_TOKEN`, `BV_ROBOT_NAME`) and bypasses the local auth file. The runtime helpers in `bv.runtime` refuse to run unless `BV_SDK_RUN=1` is set by `bv run`.
+- **Separation of dev vs runtime concerns**: SDK auth (human, short-lived) is stored in `~/.bv/auth.json`. Runner-mode auth comes from environment variables (`BV_BASE_URL` or `BV_ORCHESTRATOR_URL`, `BV_ROBOT_TOKEN`, `BV_ROBOT_NAME`) and bypasses the local auth file. The runtime helpers in `bv.runtime` refuse to run unless `BV_SDK_RUN=1` is set by `bv run`.
 
 ## 3. Project Initialization (`bv init`)
 - **What is created**: `bvproject.yaml` (project config), `main.py` (sample entrypoint), and `dist/` (build output directory). No virtual environment, `requirements.lock`, `entry-points.json`, `bindings.json`, or `pyproject.toml` are created by this command.
@@ -99,9 +99,9 @@ All commands live in src/bv/cli.py. Preconditions include having Python 3.11+ av
 
 ### `bv auth login`
 - **What it does**: Starts an SDK auth session against Orchestrator (`/api/sdk/auth/start`), opens the browser to `#/sdk-auth?session_id=...`, polls `/api/sdk/auth/status` until a token is issued, then writes `~/.bv/auth.json` (overridable via `BV_AUTH_DIR`).
-- **Preconditions**: `--api-url` and `--ui-url` provided; browser access to the UI URL; network reachability to Orchestrator.
+- **Preconditions**: `--base-url` provided (preferred); browser access to the UI; network reachability to Orchestrator. `--api-url/--ui-url` are supported for legacy installs.
 - **Files read**: None.
-- **Files written/modified**: `~/.bv/auth.json` (JSON with api_url, ui_url, access_token, expires_at, user, machine_name).
+- **Files written/modified**: `~/.bv/auth.json` (JSON with base_url, api_url, ui_url, access_token, expires_at, user, machine_name).
 - **Side effects**: Opens a browser; caches auth for subsequent commands; fails fast on HTTP errors or expired sessions.
 
 ### `bv auth status`
@@ -139,7 +139,7 @@ All commands live in src/bv/cli.py. Preconditions include having Python 3.11+ av
 
 ## 7. Developer Mode vs Runner Mode
 - **SDK auth (developer mode)**: Short-lived user token stored in `~/.bv/auth.json`, created by `bv auth login`, used by assets/queues/publish-orchestrator. Must never be embedded in production jobs or runners.
-- **Runner mode**: Long-lived robot tokens supplied via `BV_ORCHESTRATOR_URL` and `BV_ROBOT_TOKEN` (and optional `BV_ROBOT_NAME`). `bv.auth.context.load_auth_context` prefers these environment variables and marks the user as `robot:<name>`.
+- **Runner mode**: Long-lived robot tokens supplied via `BV_BASE_URL` (or `BV_ORCHESTRATOR_URL`) and `BV_ROBOT_TOKEN` (and optional `BV_ROBOT_NAME`). `bv.auth.context.load_auth_context` prefers these environment variables and marks the user as `robot:<name>`.
 - **Runtime access boundaries**: `bv.runtime.assets` and `bv.runtime.queues` call `require_bv_run` and will raise if `BV_SDK_RUN` is not set to `1`. Only `bv run` sets this flag; using these modules from other entrypoints or environments will fail.
 
 ## 8. Common Mistakes & Gotchas

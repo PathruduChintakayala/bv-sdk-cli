@@ -48,7 +48,7 @@ class PackageBuilder:
 		try:
 			with zipfile.ZipFile(tmp_output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
 				self._write_json(archive, "manifest.json", manifest)
-				self._write_json(archive, "entry-points.json", self._entrypoints(config.entrypoints))
+				self._write_json(archive, "entry-points.json", self._entrypoints(config.entrypoints, config.type))
 				self._write_file(archive, requirements_lock, Path("requirements.lock"))
 				self._write_sources(archive, sources)
 			tmp_output.replace(output_path)
@@ -121,18 +121,29 @@ class PackageBuilder:
 		}
 
 	@staticmethod
-	def _entrypoints(entries: List[EntryPoint]) -> dict:
+	def _entrypoints(entries: List[EntryPoint], project_type: str = "rpa") -> dict:
+		"""Build entry-points.json in the format expected by bv-runner.
+		
+		Args:
+			entries: List of entrypoints from project config.
+			project_type: Project type from config ('rpa' or 'agent').
+			
+		Returns:
+			Dict with 'entrypoints' key containing list of entrypoint definitions.
+		"""
 		items = []
 		for entry in entries:
 			module_name, func_name = (entry.command.split(":", 1) + [""])[:2]
-			file_path = Path(*module_name.split(".")).with_suffix(".py").as_posix() if module_name else ""
+			# Convert to Python module format (e.g., "main" not "main.py")
+			module_name = module_name.replace(".py", "").replace("/", ".")
 			items.append(
 				{
 					"name": entry.name,
-					"filePath": file_path,
-					"function": func_name,
-					"type": "agent",
+					"module": module_name,
+					"function": func_name or "main",
+					"type": project_type,
 					"default": entry.default,
 				}
 			)
-		return {"entryPoints": items}
+		# Use lowercase 'entrypoints' to match runner expectations
+		return {"entrypoints": items}

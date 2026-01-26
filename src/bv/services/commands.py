@@ -120,7 +120,17 @@ def build_package(config_path: Path, output: Optional[Path], dry_run: bool) -> P
     RequirementsLockGenerator().generate(str(project_root), deps)
 
     with zipfile.ZipFile(target, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        _write_bytes(archive, "bvproject.yaml", (project_root / "bvproject.yaml").read_bytes())
+        # Write bvproject.yaml in flat format (runner expects fields at root level)
+        flat_bvproject = {
+            "name": cfg.name,
+            "version": cfg.version,
+            "venv_dir": str(cfg.venv_dir),
+            "type": cfg.type,
+            "description": cfg.description,
+            "python_version": cfg.python_version,
+        }
+        _write_bytes(archive, "bvproject.yaml", yaml.safe_dump(flat_bvproject, sort_keys=False).encode("utf-8"))
+        
         _write_bytes(archive, "main.py", (project_root / "main.py").read_bytes())
         _write_bytes(archive, "requirements.lock", lock_path.read_bytes())
         
@@ -136,15 +146,15 @@ def build_package(config_path: Path, output: Optional[Path], dry_run: bool) -> P
         }
         _write_bytes(archive, "manifest.json", json.dumps(manifest, indent=2).encode("utf-8"))
 
-        # Also write entry-points.json for consistency with PackageBuilder
+        # Write entry-points.json matching bv-runner's expected format
+        # The runner expects: {"entrypoints": [{"name": "...", "module": "...", "function": "..."}]}
         entry_points_data = {
-            "entryPoints": [
+            "entrypoints": [
                 {
                     "name": e.name,
-                    "filePath": e.command.split(":")[0].replace(".", "/") + ".py" if ":" in e.command else e.command,
-                    "function": e.command.split(":")[1] if ":" in e.command else "",
-                    "type": "agent",
-                    "default": e.default
+                    # module is the Python module name (e.g., "main" from "main:main")
+                    "module": e.command.split(":")[0].replace(".py", "").replace("/", ".") if ":" in e.command else e.command.replace(".py", ""),
+                    "function": e.command.split(":")[1] if ":" in e.command else "main",
                 } for e in cfg.entrypoints
             ]
         }
