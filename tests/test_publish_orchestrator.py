@@ -32,11 +32,19 @@ class _FakeResp:
         return self._json_data
 
 
-def _write_auth(tmp: Path, *, api_url: str = "http://127.0.0.1:8000") -> None:
+def _write_auth(
+    tmp: Path,
+    *,
+    base_url: str = "http://127.0.0.1:8000/default/orchestrator_",
+) -> None:
+    """Write auth file with canonical base_url.
+
+    base_url must include tenant segment and /orchestrator_/ suffix.
+    Example: http://127.0.0.1:8000/default/orchestrator_
+    """
     expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
     payload = {
-        "api_url": api_url,
-        "ui_url": api_url,
+        "base_url": base_url,
         "access_token": "token123",
         "expires_at": expires,
         "user": {"id": 1, "username": "dev"},
@@ -87,9 +95,9 @@ def test_publish_stops_if_preflight_rejects(monkeypatch: pytest.MonkeyPatch, tmp
 
         def _fake_request(method: str, url: str, **kwargs):
             calls.append((method, url))
-            if url.endswith("/api/packages/preflight"):
+            if "/packages/preflight" in url:
                 return _FakeResp(status_code=200, json_data={"can_publish": False, "reason": "already exists"})
-            if url.endswith("/api/packages/upload"):
+            if "/packages/upload" in url:
                 return _FakeResp(status_code=200, json_data={"ok": True})
             return _FakeResp(status_code=404, json_data={"detail": "not found"})
 
@@ -100,8 +108,8 @@ def test_publish_stops_if_preflight_rejects(monkeypatch: pytest.MonkeyPatch, tmp
 
         assert result.exit_code == 1
         assert "already exists" in result.output
-        assert any(p.endswith("/api/packages/preflight") for _, p in calls)
-        assert not any(p.endswith("/api/packages/upload") for _, p in calls)
+        assert any("/packages/preflight" in p for _, p in calls)
+        assert not any("/packages/upload" in p for _, p in calls)
 
 
 def test_publish_uploads_only_after_successful_preflight(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -128,11 +136,11 @@ def test_publish_uploads_only_after_successful_preflight(monkeypatch: pytest.Mon
 
         def _fake_request(method: str, url: str, **kwargs):
             calls.append(url)
-            if url.endswith("/api/packages/preflight"):
+            if "/packages/preflight" in url:
                 body = kwargs.get("json")
                 assert body == {"name": "demo-automation", "version": "1.2.3"}
                 return _FakeResp(status_code=200, json_data={"can_publish": True})
-            if url.endswith("/api/packages/upload"):
+            if "/packages/upload" in url:
                 files = kwargs.get("files")
                 assert files and "file" in files
                 return _FakeResp(status_code=200, json_data={"ok": True})
@@ -145,8 +153,8 @@ def test_publish_uploads_only_after_successful_preflight(monkeypatch: pytest.Mon
 
         assert result.exit_code == 0
         assert "Published demo-automation@1.2.3" in result.output
-        assert calls[-2].endswith("/api/packages/preflight")
-        assert calls[-1].endswith("/api/packages/upload")
+        assert "/packages/preflight" in calls[-2]
+        assert "/packages/upload" in calls[-1]
 
 
 def test_publish_auth_error_handled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -199,9 +207,9 @@ def test_no_upload_happens_on_upload_failure(monkeypatch: pytest.MonkeyPatch, tm
 
         def _fake_request(method: str, url: str, **kwargs):
             nonlocal upload_attempts
-            if url.endswith("/api/packages/preflight"):
+            if "/packages/preflight" in url:
                 return _FakeResp(status_code=200, json_data={"can_publish": True})
-            if url.endswith("/api/packages/upload"):
+            if "/packages/upload" in url:
                 upload_attempts += 1
                 return _FakeResp(status_code=500, json_data={"detail": "backend exploded"})
             return _FakeResp(status_code=404, json_data={"detail": "not found"})

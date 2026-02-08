@@ -1,12 +1,29 @@
 from __future__ import annotations
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 import httpx
 from bv.auth.context import AuthError, AuthContext, require_auth
 
+
 class OrchestratorError(RuntimeError):
     pass
+
+
+def _redact_tokens(text: str) -> str:
+    """Redact potential tokens from error messages.
+    
+    Removes JWT-like strings and long hex strings that may be tokens.
+    This prevents accidental token leakage in error logs.
+    """
+    if not text:
+        return text
+    # Redact JWT-like strings (header.payload.signature)
+    text = re.sub(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[REDACTED]', text)
+    # Redact hex tokens (32+ chars, typical for API tokens)
+    text = re.sub(r'[a-f0-9]{32,}', '[REDACTED]', text, flags=re.IGNORECASE)
+    return text
 
 @dataclass(frozen=True)
 class OrchestratorResponse:
@@ -33,6 +50,11 @@ class OrchestratorClient:
 
     @property
     def base_url(self) -> str:
+        """Get the canonical API base URL for requests.
+        
+        Returns the canonical /{tenant}/orchestrator_/ URL.
+        AuthContext.api_url is derived from base_url using BaseUrlResolver.
+        """
         return self._auth().api_url.rstrip("/")
 
     def _headers(self) -> Dict[str, str]:
@@ -79,7 +101,11 @@ class OrchestratorClient:
                 error_data = resp.json()
                 detail = error_data.get("detail") if isinstance(error_data, dict) else None
                 if detail:
+                    # Redact potential tokens from error detail
+                    detail = _redact_tokens(str(detail))
                     raise OrchestratorError(f"Permission denied: {detail}")
+            except OrchestratorError:
+                raise
             except Exception:
                 pass
             raise OrchestratorError("Permission denied")
@@ -96,6 +122,9 @@ class OrchestratorClient:
                 message = data_out.get("detail") or data_out.get("message") or data_out.get("error")
             if not message:
                 message = data_out if isinstance(data_out, str) else repr(data_out)
+            # Redact potential tokens from error messages
+            if isinstance(message, str):
+                message = _redact_tokens(message)
             raise OrchestratorError(f"Orchestrator error {resp.status_code}: {message}")
 
         return OrchestratorResponse(status_code=resp.status_code, data=data_out)

@@ -26,7 +26,7 @@ def _to_yaml(obj: dict) -> str:
 
 
 def _valid_files(*, version: str = "0.0.1", multiple_defaults: bool = False) -> dict[str, str]:
-    bvproject = {
+    project_data = {
         "name": "demo_pkg",
         "version": version,
         "entrypoints": [
@@ -35,37 +35,36 @@ def _valid_files(*, version: str = "0.0.1", multiple_defaults: bool = False) -> 
     }
 
     if multiple_defaults:
-        bvproject["entrypoints"].append(
+        project_data["entrypoints"].append(
             {"name": "alt", "command": "alt:run", "default": True}
         )
 
+    bvproject = {"project": project_data}
+
+    # Canonical entry-points.json schema: derived from bvproject.yaml.
+    # Three fields per entry: name, module, function. No extras.
     entry_points = {
-        "entryPoints": [
+        "entrypoints": [
             {
                 "name": "main",
-                "filePath": "main.py",
+                "module": "main",
                 "function": "main",
-                "type": "agent",
-                "default": True,
             }
         ]
     }
 
     if multiple_defaults:
-        entry_points["entryPoints"].append(
+        entry_points["entrypoints"].append(
             {
                 "name": "alt",
-                "filePath": "alt.py",
+                "module": "alt",
                 "function": "run",
-                "type": "agent",
-                "default": True,
             }
         )
 
     return {
         "bvproject.yaml": _to_yaml(bvproject),
         "entry-points.json": json.dumps(entry_points, indent=2),
-        "pyproject.toml": "[project]\nrequires-python = '>=3.11'\ndependencies = []\n",
         "main.py": "def main():\n    return 123\n",
         "alt.py": "def run():\n    return 456\n",
     }
@@ -116,20 +115,22 @@ def test_invalid_semver_fails(tmp_path: Path) -> None:
     assert "must be SemVer" in str(e.value)
 
 
-def test_entry_points_json_mismatch_fails(tmp_path: Path) -> None:
+def test_entry_points_json_mismatch_warns(tmp_path: Path) -> None:
+    """entry-points.json drift produces non-fatal warnings, not errors."""
     pkg = tmp_path / "demo_pkg-0.0.1.bvpackage"
     files = _valid_files()
 
     bad = json.loads(files["entry-points.json"])
-    bad["entryPoints"][0]["function"] = "not_main"
+    bad["entrypoints"][0]["function"] = "not_main"
     files["entry-points.json"] = json.dumps(bad, indent=2)
 
     _write_zip(pkg, files)
 
-    with pytest.raises(BVPackageContractError) as e:
-        validate_bvpackage_contract_v1(str(pkg))
+    # Should NOT raise — bvproject.yaml is authoritative
+    result = validate_bvpackage_contract_v1(str(pkg))
 
-    assert "does not match bvproject.yaml command" in str(e.value)
+    assert result.name == "demo_pkg"
+    assert any("command mismatch" in w for w in result.warnings)
 
 
 def test_reupload_same_name_version_rejected(tmp_path: Path) -> None:

@@ -149,10 +149,9 @@ class ProjectConfigLoader:
         if not isinstance(raw, Mapping):
             raise ValueError("Configuration root must be a mapping")
 
-        # Support both flat and 'project:' nested structure
         project = raw.get("project")
         if not isinstance(project, Mapping):
-            project = raw
+            raise ValueError("Configuration must contain a 'project' mapping")
 
         raw_type = project.get("type")
         if raw_type is None or str(raw_type).strip() == "":
@@ -175,15 +174,6 @@ class ProjectConfigLoader:
                         workdir=Path(e["workdir"]) if e.get("workdir") else None,
                         default=bool(e.get("default", False))
                     ))
-        
-        # Legacy single entrypoint support
-        legacy_entry = project.get("entrypoint")
-        if legacy_entry and not entrypoints:
-            entrypoints.append(EntryPoint(
-                name="main",
-                command=str(legacy_entry),
-                default=True
-            ))
 
         cfg = ProjectConfig(
             name=str(project.get("name") or ""),

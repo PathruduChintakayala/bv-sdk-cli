@@ -27,9 +27,13 @@ class Asset:
 
 
 def list_assets(search: str | None = None) -> list[Asset]:
+    """List all assets from the orchestrator.
+    
+    Path is relative to api_base_url (no /api prefix needed).
+    """
     client = OrchestratorClient()
     params = {"search": search} if search else None
-    resp = client.request("GET", "/api/assets", params=params)
+    resp = client.request("GET", "/assets", params=params)
 
     data = resp.data
     if isinstance(data, dict) and isinstance(data.get("items"), list):
@@ -58,6 +62,10 @@ def list_assets(search: str | None = None) -> list[Asset]:
 
 
 def get_asset(name: str) -> Asset:
+    """Get an asset by name from the orchestrator.
+    
+    Path is relative to api_base_url (no /api prefix needed).
+    """
     if not name:
         raise ValueError("Asset name is required")
 
@@ -65,7 +73,7 @@ def get_asset(name: str) -> Asset:
 
     # Prefer a direct lookup, then fall back to list + exact match.
     try:
-        resp = client.request("GET", f"/api/assets/{name}")
+        resp = client.request("GET", f"/assets/{name}")
         data = resp.data
         if isinstance(data, dict):
             return Asset(

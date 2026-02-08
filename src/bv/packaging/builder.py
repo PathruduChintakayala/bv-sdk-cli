@@ -4,13 +4,53 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import List, Sequence
 
 from bv.project.config import EntryPoint, ProjectConfig
 from bv.venv.manager import VenvManager
 
 
 EXCLUDE_DIRS = {".venv", "__pycache__", ".git", "dist"}
+
+
+def derive_entry_points_json(entries: List[EntryPoint]) -> dict:
+    """Derive entry-points.json content from bvproject.yaml entrypoints.
+
+    This is the SINGLE canonical function that produces entry-points.json.
+    bvproject.yaml is the authoritative source; entry-points.json is a
+    derived artifact consumed by bv-runner for execution.
+
+    Canonical schema::
+
+        {
+            "entrypoints": [
+                {"name": "main", "module": "main", "function": "main"},
+                ...
+            ]
+        }
+
+    Fields per entry (exactly three, no extras):
+        name     – entrypoint name (from bvproject.yaml)
+        module   – Python module path derived from command (e.g. "main")
+        function – function name derived from command (e.g. "main")
+
+    Args:
+        entries: Entrypoints loaded from bvproject.yaml.
+
+    Returns:
+        Dict ready for ``json.dumps`` and inclusion in .bvpackage.
+    """
+    items = []
+    for entry in entries:
+        parts = entry.command.split(":", 1)
+        module_name = parts[0].replace(".py", "").replace("/", ".")
+        func_name = parts[1] if len(parts) > 1 else "main"
+        items.append({
+            "name": entry.name,
+            "module": module_name,
+            "function": func_name,
+        })
+    return {"entrypoints": items}
 
 
 class PackageBuilder:
@@ -48,7 +88,7 @@ class PackageBuilder:
 		try:
 			with zipfile.ZipFile(tmp_output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
 				self._write_json(archive, "manifest.json", manifest)
-				self._write_json(archive, "entry-points.json", self._entrypoints(config.entrypoints, config.type))
+				self._write_json(archive, "entry-points.json", self._entrypoints(config.entrypoints))
 				self._write_file(archive, requirements_lock, Path("requirements.lock"))
 				self._write_sources(archive, sources)
 			tmp_output.replace(output_path)
@@ -121,29 +161,10 @@ class PackageBuilder:
 		}
 
 	@staticmethod
-	def _entrypoints(entries: List[EntryPoint], project_type: str = "rpa") -> dict:
-		"""Build entry-points.json in the format expected by bv-runner.
-		
-		Args:
-			entries: List of entrypoints from project config.
-			project_type: Project type from config ('rpa' or 'agent').
-			
-		Returns:
-			Dict with 'entrypoints' key containing list of entrypoint definitions.
+	def _entrypoints(entries: List[EntryPoint]) -> dict:
+		"""Build entry-points.json using the canonical derivation function.
+
+		Delegates to :func:`derive_entry_points_json` — the single source
+		of truth for this derived artifact.
 		"""
-		items = []
-		for entry in entries:
-			module_name, func_name = (entry.command.split(":", 1) + [""])[:2]
-			# Convert to Python module format (e.g., "main" not "main.py")
-			module_name = module_name.replace(".py", "").replace("/", ".")
-			items.append(
-				{
-					"name": entry.name,
-					"module": module_name,
-					"function": func_name or "main",
-					"type": project_type,
-					"default": entry.default,
-				}
-			)
-		# Use lowercase 'entrypoints' to match runner expectations
-		return {"entrypoints": items}
+		return derive_entry_points_json(entries)

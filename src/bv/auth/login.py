@@ -1,10 +1,19 @@
+"""Interactive login flow for bv-sdk-cli.
+
+This module provides browser-based OAuth login against the Orchestrator.
+The user must provide the full canonical URL including tenant:
+    https://<host>/<tenant>/orchestrator_
+
+The API URL is the canonical URL itself (no /api suffix).
+The browser is directed to the frontend base (canonical minus /orchestrator_/).
+"""
 from __future__ import annotations
 
 import base64
 import json
 import platform
+import re
 import time
-import warnings
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,30 +23,32 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 
 from bv.auth.context import AuthContext, AuthUser
+from bv.common.url_resolver import BaseUrlResolver
 
 
 class LoginError(RuntimeError):
     pass
 
 
+def _redact_tokens(text: str) -> str:
+    """Redact potential tokens from error messages.
+
+    Removes JWT-like strings and long hex strings that may be tokens.
+    This prevents accidental token leakage in error logs.
+    """
+    if not text:
+        return text
+    # Redact JWT-like strings (header.payload.signature)
+    text = re.sub(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[REDACTED]', text)
+    # Redact hex tokens (32+ chars, typical for API tokens)
+    text = re.sub(r'[a-f0-9]{32,}', '[REDACTED]', text, flags=re.IGNORECASE)
+    return text
+
+
 @dataclass(frozen=True)
 class LoginResult:
     auth_context: AuthContext
     session_id: str
-
-
-def _normalize_base_url(url: str) -> str:
-    u = (url or "").strip()
-    if not u:
-        raise LoginError("Orchestrator URL is missing")
-    return u.rstrip("/")
-
-
-def _normalize_root_url(url: str) -> str:
-    base = _normalize_base_url(url)
-    if base.endswith("/api"):
-        return base[:-4]
-    return base
 
 
 def _parse_iso8601(value: str) -> datetime:
@@ -87,12 +98,23 @@ def _infer_user_from_token(token: str) -> AuthUser:
     return AuthUser(id=user_id, username=username)
 
 
-def open_auth_browser(ui_url: str, session_id: str) -> str:
-    base = _normalize_base_url(ui_url)
-    # Preserve any existing path/query on ui_url; set fragment to the required route.
-    parts = urlsplit(base)
-    fragment = f"/sdk-auth?session_id={session_id}"
-    target = urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, fragment))
+def _open_auth_browser(canonical_base: str, session_id: str) -> str:
+    """Open browser to the SDK auth page.
+
+    The SPA uses BrowserRouter with basename=/{tenant}/orchestrator_, so the
+    full path must be /{tenant}/orchestrator_/sdk-auth?session_id=...
+
+    Args:
+        canonical_base: The canonical orchestrator URL (e.g.
+            https://host/tenant/orchestrator_).
+        session_id: The auth session ID.
+
+    Returns:
+        The full URL that was opened.
+    """
+    # Append the SPA route as a path (NOT a fragment/#hash).
+    base = canonical_base.rstrip("/")
+    target = f"{base}/sdk-auth?session_id={session_id}"
     try:
         webbrowser.open(target)
     except Exception:
@@ -101,66 +123,18 @@ def open_auth_browser(ui_url: str, session_id: str) -> str:
     return target
 
 
-def _discover_endpoints(base_url: str) -> tuple[str, str]:
-    """Best-effort endpoint discovery from a base URL."""
-    discovery_url = f"{base_url}/.well-known/bv-orchestrator"
-    try:
-        resp = requests.get(discovery_url, timeout=5)
-    except requests.RequestException:
-        return base_url, base_url
+def _start_auth_session(resolver: BaseUrlResolver, machine_name: str) -> tuple[str, bool]:
+    """Start an authentication session with the orchestrator.
 
-    if resp.status_code >= 400:
-        return base_url, base_url
+    Args:
+        resolver: BaseUrlResolver with the canonical platform URL.
+        machine_name: Name of the machine to authenticate.
 
-    try:
-        data = resp.json()
-    except Exception:
-        return base_url, base_url
-
-    if not isinstance(data, dict):
-        return base_url, base_url
-
-    api_base = str(data.get("api_base_url") or data.get("api_url") or "").strip() or base_url
-    ui_base = str(data.get("ui_base_url") or data.get("ui_url") or "").strip() or base_url
-    return api_base, ui_base
-
-
-def _resolve_login_urls(
-    *,
-    base_url: str | None,
-    api_url: str | None,
-    ui_url: str | None,
-) -> tuple[str, str, str]:
-    if base_url:
-        if api_url or ui_url:
-            warnings.warn(
-                "Ignoring --api-url/--ui-url because --base-url was provided.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        base = _normalize_root_url(base_url)
-        api_base, ui_base = _discover_endpoints(base)
-        return base, _normalize_base_url(api_base or base), _normalize_base_url(ui_base or base)
-
-    if api_url or ui_url:
-        warnings.warn(
-            "Passing --api-url/--ui-url is deprecated. Use --base-url instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if not api_url or not ui_url:
-            raise LoginError("Both --api-url and --ui-url are required when --base-url is not provided.")
-        api_base = _normalize_base_url(api_url)
-        ui_base = _normalize_base_url(ui_url)
-        base = _normalize_root_url(ui_base or api_base)
-        return base, api_base, ui_base
-
-    raise LoginError("Base URL is missing. Provide --base-url (preferred).")
-
-
-def start_auth_session(api_url: str, machine_name: str) -> tuple[str, bool]:
-    base = _normalize_base_url(api_url)
-    start_url = f"{base}/api/sdk/auth/start"
+    Returns:
+        Tuple of (session_id, reused).
+    """
+    # api_base is the canonical URL: /{tenant}/orchestrator_/
+    start_url = f"{resolver.api_base}/sdk/auth/start"
 
     body = {
         "machine_name": machine_name,
@@ -170,10 +144,10 @@ def start_auth_session(api_url: str, machine_name: str) -> tuple[str, bool]:
     try:
         resp = requests.post(start_url, json=body, timeout=15)
     except requests.RequestException as exc:
-        raise LoginError(f"Unable to reach Orchestrator at {base}: {exc}") from exc
+        raise LoginError(f"Unable to reach Orchestrator at {resolver.canonical_base}: {exc}") from exc
 
     if resp.status_code >= 400:
-        raise LoginError(f"Auth start failed ({resp.status_code}): {resp.text}")
+        raise LoginError(f"Auth start failed ({resp.status_code}): {_redact_tokens(resp.text)}")
 
     try:
         data = resp.json()
@@ -199,15 +173,27 @@ def start_auth_session(api_url: str, machine_name: str) -> tuple[str, bool]:
     return session_id, reused
 
 
-def poll_for_token(
-    orchestrator_url: str,
+def _poll_for_token(
+    resolver: BaseUrlResolver,
     session_id: str,
     timeout_seconds: int = 300,
     poll_interval_seconds: float = 2.0,
     on_waiting: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    base = _normalize_base_url(orchestrator_url)
-    status_url = f"{base}/api/sdk/auth/status"
+    """Poll for authentication token completion.
+
+    Args:
+        resolver: BaseUrlResolver with the canonical platform URL.
+        session_id: The session ID from _start_auth_session.
+        timeout_seconds: Maximum time to wait for authentication.
+        poll_interval_seconds: Interval between poll attempts.
+        on_waiting: Optional callback to invoke while waiting.
+
+    Returns:
+        Authentication data including access_token and expires_at.
+    """
+    # api_base is the canonical URL: /{tenant}/orchestrator_/
+    status_url = f"{resolver.api_base}/sdk/auth/status"
 
     deadline = time.time() + float(timeout_seconds)
     last_error: str | None = None
@@ -228,7 +214,7 @@ def poll_for_token(
             continue
 
         if resp.status_code == 410:
-            raise LoginError("Auth session expired. Run bv auth login again.")
+            raise LoginError("Auth session expired. Run 'bv auth login' again.")
 
         if resp.status_code in (200, 201):
             try:
@@ -240,7 +226,7 @@ def poll_for_token(
 
             status = str(data.get("status") or "").lower().strip()
             if status == "expired" or bool(data.get("expired") is True):
-                raise LoginError("Auth session expired. Run bv auth login again.")
+                raise LoginError("Auth session expired. Run 'bv auth login' again.")
 
             token = str(data.get("access_token") or "").strip()
             expires_at = str(data.get("expires_at") or "").strip()
@@ -256,11 +242,11 @@ def poll_for_token(
             last_error = "session not found"
         elif resp.status_code >= 400:
             try:
-                detail = resp.text
+                detail = _redact_tokens(resp.text)
             except Exception:
                 detail = ""
             if "expired" in (detail or "").lower():
-                raise LoginError("Auth session expired. Run bv auth login again.")
+                raise LoginError("Auth session expired. Run 'bv auth login' again.")
             raise LoginError(f"Auth failed ({resp.status_code}): {detail}")
 
         time.sleep(poll_interval_seconds)
@@ -271,26 +257,50 @@ def poll_for_token(
 
 def interactive_login(
     *,
-    base_url: str | None = None,
-    api_url: str | None = None,
-    ui_url: str | None = None,
+    base_url: str,
     on_started: Callable[[str, bool, str], None] | None = None,
     on_waiting: Callable[[], None] | None = None,
 ) -> LoginResult:
-    base_url, api_base, ui_base = _resolve_login_urls(
-        base_url=base_url,
-        api_url=api_url,
-        ui_url=ui_url,
-    )
+    """Perform interactive browser-based login.
+
+    Args:
+        base_url: Canonical platform URL including tenant, e.g.:
+                  https://cloud.botvelocity.com/acme/orchestrator_
+                  (or just https://cloud.botvelocity.com/acme — /orchestrator_/ is appended)
+        on_started: Callback when auth session starts. Args: (session_id, reused, browser_url)
+        on_waiting: Callback while waiting for browser authentication.
+
+    Returns:
+        LoginResult with AuthContext and session_id.
+
+    Raises:
+        LoginError: If login fails or times out.
+    """
+    if not base_url or not base_url.strip():
+        raise LoginError(
+            "Platform URL is required. Provide --base-url, e.g. "
+            "https://<host>/<tenant>/orchestrator_"
+        )
+
+    # Use BaseUrlResolver for all URL handling (canonical model)
+    try:
+        resolver = BaseUrlResolver(base_url)
+    except ValueError as exc:
+        raise LoginError(
+            f"Invalid platform URL: {exc}. "
+            "The URL must include the tenant segment, e.g. "
+            "https://<host>/<tenant>/orchestrator_"
+        ) from exc
 
     machine_name = platform.node() or "<unknown>"
-    session_id, reused = start_auth_session(api_base, machine_name=machine_name)
+    session_id, reused = _start_auth_session(resolver, machine_name=machine_name)
 
-    target = open_auth_browser(ui_base, session_id=session_id)
+    # Browser goes to the SPA route: /{tenant}/orchestrator_/sdk-auth?session_id=...
+    target = _open_auth_browser(resolver.canonical_base, session_id=session_id)
     if on_started is not None:
         on_started(session_id, reused, target)
 
-    data = poll_for_token(api_base, session_id=session_id, on_waiting=on_waiting)
+    data = _poll_for_token(resolver, session_id=session_id, on_waiting=on_waiting)
 
     access_token = str(data.get("access_token") or "").strip()
     expires_at_raw = str(data.get("expires_at") or "").strip()
@@ -311,12 +321,10 @@ def interactive_login(
     if user is None or (user.id is None and not user.username):
         user = _infer_user_from_token(access_token)
 
-    machine_name = platform.node() or None
+    machine_name = platform.node() or "<unknown>"
 
     ctx = AuthContext(
-        base_url=base_url,
-        api_url=api_base,
-        ui_url=ui_base,
+        base_url=resolver.canonical_base,
         access_token=access_token,
         expires_at=expires_at,
         user=user,

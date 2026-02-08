@@ -57,7 +57,11 @@ class ProjectValidator:
             self.errors.append(f"ERROR: Invalid YAML syntax in bvproject.yaml: {e}")
             return None
 
-        if not config or "project" not in config or not isinstance(config.get("project"), dict):
+        if not config or not isinstance(config, dict):
+            self.errors.append("ERROR: bvproject.yaml must be a valid YAML mapping")
+            return None
+
+        if "project" not in config or not isinstance(config.get("project"), dict):
             self.errors.append("ERROR: bvproject.yaml must contain 'project' mapping")
             return None
 
@@ -78,36 +82,25 @@ class ProjectValidator:
             else:
                 project["type"] = project_type
 
-        # Support both new format (entrypoints) and legacy format (entrypoint)
         entrypoints = project.get("entrypoints")
-        entrypoint = project.get("entrypoint")
-        
-        if entrypoints:
-            # New format: entrypoints is a list
-            if not isinstance(entrypoints, list) or len(entrypoints) == 0:
-                self.errors.append("ERROR: project.entrypoints must be a non-empty list")
-            else:
-                defaults = [e for e in entrypoints if isinstance(e, dict) and e.get("default")]
-                if len(defaults) != 1:
-                    self.errors.append("ERROR: project.entrypoints must have exactly one entrypoint marked as default")
-                for i, ep in enumerate(entrypoints):
-                    if not isinstance(ep, dict):
-                        self.errors.append(f"ERROR: project.entrypoints[{i}] must be a mapping")
-                        continue
-                    if "name" not in ep or not ep.get("name"):
-                        self.errors.append(f"ERROR: project.entrypoints[{i}].name is required")
-                    if "command" not in ep or not ep.get("command"):
-                        self.errors.append(f"ERROR: project.entrypoints[{i}].command is required")
-                    elif not ENTRYPOINT_PATTERN.match(str(ep.get("command", ""))):
-                        self.errors.append(f"ERROR: project.entrypoints[{i}].command must be like 'main:main' or end with .py")
-        elif entrypoint:
-            # Legacy format: entrypoint is a string
-            if not isinstance(entrypoint, str) or not entrypoint.strip():
-                self.errors.append("ERROR: project.entrypoint must be a non-empty string")
-            elif not ENTRYPOINT_PATTERN.match(entrypoint.strip()):
-                self.errors.append("ERROR: project.entrypoint must be like 'main:main' or end with .py")
+        if not entrypoints:
+            self.errors.append("ERROR: project.entrypoints is required")
+        elif not isinstance(entrypoints, list) or len(entrypoints) == 0:
+            self.errors.append("ERROR: project.entrypoints must be a non-empty list")
         else:
-            self.errors.append("ERROR: Missing required field project.entrypoint or project.entrypoints")
+            defaults = [e for e in entrypoints if isinstance(e, dict) and e.get("default")]
+            if len(defaults) != 1:
+                self.errors.append("ERROR: project.entrypoints must have exactly one entrypoint marked as default")
+            for i, ep in enumerate(entrypoints):
+                if not isinstance(ep, dict):
+                    self.errors.append(f"ERROR: project.entrypoints[{i}] must be a mapping")
+                    continue
+                if "name" not in ep or not ep.get("name"):
+                    self.errors.append(f"ERROR: project.entrypoints[{i}].name is required")
+                if "command" not in ep or not ep.get("command"):
+                    self.errors.append(f"ERROR: project.entrypoints[{i}].command is required")
+                elif not ENTRYPOINT_PATTERN.match(str(ep.get("command", ""))):
+                    self.errors.append(f"ERROR: project.entrypoints[{i}].command must be like 'main:main' or end with .py")
 
         if "python_version" in project:
             pyv = str(project["python_version"]).strip()
@@ -127,21 +120,13 @@ class ProjectValidator:
             return
 
         project = config.get("project", {})
-        # Support both new format (entrypoints) and legacy format (entrypoint)
         entrypoints = project.get("entrypoints")
-        entrypoint = project.get("entrypoint", "")
-        
-        if entrypoints:
-            # New format: validate the default entrypoint
-            defaults = [e for e in entrypoints if isinstance(e, dict) and e.get("default")]
-            if defaults:
-                ep = str(defaults[0].get("command", ""))
-            else:
-                # No default found, skip validation (error already reported in _validate_bvproject_yaml)
-                return
+        defaults = [e for e in entrypoints if isinstance(e, dict) and e.get("default")] if entrypoints else []
+        if defaults:
+            ep = str(defaults[0].get("command", ""))
         else:
-            # Legacy format
-            ep = entrypoint
+            # No default found, skip validation (error already reported in _validate_bvproject_yaml)
+            return
         
         if not ep:
             return

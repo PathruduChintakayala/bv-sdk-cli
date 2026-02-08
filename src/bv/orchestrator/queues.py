@@ -12,8 +12,12 @@ class Queue:
 
 
 def list_queues() -> list[Queue]:
+    """List all queues from the orchestrator.
+    
+    Path is relative to api_base_url (no /api prefix needed).
+    """
     client = OrchestratorClient()
-    resp = client.request("GET", "/api/queues")
+    resp = client.request("GET", "/queues")
     data = resp.data
 
     if isinstance(data, dict) and isinstance(data.get("items"), list):
@@ -38,6 +42,10 @@ def list_queues() -> list[Queue]:
 
 
 def enqueue(queue_name: str, payload: dict) -> Any:
+    """Enqueue an item to a queue.
+    
+    Path is relative to api_base_url (no /api prefix needed).
+    """
     if not queue_name:
         raise ValueError("queue_name is required")
     if not isinstance(payload, dict):
@@ -45,11 +53,15 @@ def enqueue(queue_name: str, payload: dict) -> Any:
 
     client = OrchestratorClient()
     body = {"queue_name": queue_name, "payload": payload}
-    resp = client.request("POST", "/api/queue-items", json=body)
+    resp = client.request("POST", "/queue-items", json=body)
     return resp.data
 
 
 def dequeue(queue_name: str) -> dict | None:
+    """Dequeue an item from a queue.
+    
+    Path is relative to api_base_url (no /api prefix needed).
+    """
     if not queue_name:
         raise ValueError("queue_name is required")
 
@@ -57,7 +69,7 @@ def dequeue(queue_name: str) -> dict | None:
 
     # Try a "next" endpoint first.
     try:
-        resp = client.request("GET", "/api/queue-items/next", params={"queue_name": queue_name})
+        resp = client.request("GET", "/queue-items/next", params={"queue_name": queue_name})
         data = resp.data
         if data in (None, "", []):
             return None
@@ -70,7 +82,7 @@ def dequeue(queue_name: str) -> dict | None:
         pass
 
     # Fallback: plain list endpoint.
-    resp = client.request("GET", "/api/queue-items", params={"queue_name": queue_name, "limit": 1})
+    resp = client.request("GET", "/queue-items", params={"queue_name": queue_name, "limit": 1})
     data = resp.data
     if isinstance(data, dict) and isinstance(data.get("items"), list):
         items = data.get("items")

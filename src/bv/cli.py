@@ -42,27 +42,27 @@ app.add_typer(publish_app, name="publish")
 
 @auth_app.command("login", help="Authenticate this machine for SDK developer mode")
 def auth_login(
-	base_url: str = typer.Option(None, "--base-url", help="Orchestrator base URL (e.g. https://cloud.botvelocity.com)"),
-	api_url: str = typer.Option(None, "--api-url", help="(Deprecated) Orchestrator API base URL"),
-	ui_url: str = typer.Option(None, "--ui-url", help="(Deprecated) Orchestrator UI base URL"),
+	base_url: str = typer.Option(..., "--base-url", help="Canonical URL (e.g. https://cloud.botvelocity.com/<tenant>/orchestrator_)"),
 ) -> None:
+	"""Authenticate with the Bot Velocity platform.
+	
+	Provide the canonical platform URL including tenant, e.g.:
+	  https://cloud.botvelocity.com/acme/orchestrator_
+	"""
 	try:
 		def _started(session_id: str, reused: bool, target: str) -> None:
 			if reused:
-				typer.echo("Reusing existing auth session …")
+				typer.echo("Reusing existing auth session...")
 			typer.echo(f"Opening browser for login: {target}")
 			typer.echo(
-			"If you are redirected to dashboard after login, ensure the URL still contains "
-			"#/sdk-auth?session_id=..."
-		)
+				"If the browser does not open automatically, copy the URL above into your browser."
+			)
 
 		def _waiting() -> None:
-			typer.echo("Waiting for browser authentication… (open tab if not already)")
+			typer.echo("Waiting for browser authentication... (open tab if not already)")
 
 		result = interactive_login(
 			base_url=base_url,
-			api_url=api_url,
-			ui_url=ui_url,
 			on_started=_started,
 			on_waiting=_waiting,
 		)
@@ -86,8 +86,7 @@ def auth_status() -> None:
 	expired = ctx.is_expired()
 	typer.echo("Logged in" if not expired else "Not logged in (token expired)")
 	typer.echo(f"base_url: {ctx.base_url}")
-	typer.echo(f"api_url: {ctx.api_url}")
-	typer.echo(f"ui_url: {ctx.ui_url}")
+	typer.echo(f"api_url: {ctx.api_url}")  # Derived from base_url
 	typer.echo(f"expires_at: {ctx.expires_at.isoformat()}")
 	typer.echo(f"username: {ctx.user.username or '<unknown>'}")
 	typer.echo(f"machine_name: {ctx.machine_name}")
@@ -303,11 +302,11 @@ def publish_orchestrator(
 
 	client = OrchestratorClient()
 
-	# 3) Preflight
+	# 3) Preflight - path is relative to api_base_url (no /api prefix needed)
 	try:
 		resp = client.request(
 			"POST",
-			"/api/packages/preflight",
+			"/packages/preflight",
 			json={"name": cfg.name, "version": cfg.version},
 		)
 	except OrchestratorError as exc:
@@ -324,11 +323,11 @@ def publish_orchestrator(
 		typer.echo(str(reason))
 		raise typer.Exit(code=1)
 
-	# 4) Upload
+	# 4) Upload - path is relative to api_base_url (no /api prefix needed)
 	try:
 		with package_path.open("rb") as handle:
 			files = {"file": (package_path.name, handle, "application/octet-stream")}
-			client.request("POST", "/api/packages/upload", files=files)
+			client.request("POST", "/packages/upload", files=files)
 	except OrchestratorError as exc:
 		typer.echo(f"Error: Failed to upload package: {exc}", err=True)
 		raise typer.Exit(code=1)
@@ -344,9 +343,10 @@ def publish_orchestrator(
 def run(
 	config: Path = typer.Option(Path("bvproject.yaml"), help="Path to bvproject.yaml"),
 	entry: Optional[str] = typer.Option(None, "--entry", help="Entrypoint name to run"),
+	folder: Optional[str] = typer.Option(None, "--folder", help="Workspace/folder name for asset and queue access"),
 ) -> None:
 	try:
-		result = run_project(config_path=config, entrypoint_name=entry)
+		result = run_project(config_path=config, entrypoint_name=entry, folder_name=folder)
 	except Exception as exc:
 		typer.echo(f"Error: {exc}", err=True)
 		raise typer.Exit(code=1)
